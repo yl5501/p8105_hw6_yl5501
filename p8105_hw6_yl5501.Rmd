@@ -1,0 +1,232 @@
+---
+title: "Homework 5"
+author: Yujie Li
+date: 2024-11-10 
+output: 
+  html_document:
+    toc: true 
+    toc_float: true 
+   
+output: github_document 
+---
+
+
+```{r, echo = FALSE, message = FALSE}
+library(tidyverse)
+```
+
+
+## Problem 1
+
+```{r}
+simulate_birthdays <- function(n) {
+  birthdays <- sample(1:365, size = n, replace = TRUE)
+  return(any(duplicated(birthdays)))
+}
+
+# Simulation for group sizes 2 to 50
+set.seed(123) # Ensure reproducibility
+group_sizes <- 2:50
+probabilities <- numeric(length(group_sizes))
+
+for (i in seq_along(group_sizes)) {
+  group_size <- group_sizes[i]
+  results <- replicate(10000, simulate_birthdays(group_size))
+  probabilities[i] <- mean(results)
+}
+
+# Plotting the results
+plot(group_sizes, probabilities, type = "b", 
+     xlab = "Group Size", ylab = "Probability of Shared Birthday", 
+     main = "Birthday Paradox Simulation",
+     pch = 16)
+grid()
+
+```
+
+## Comment 
+The probabilities increase rapidly with group size. By a group size of 23, the probability exceeds 50%, demonstrating the surprising nature of the birthday paradox.
+
+
+## Problem 2
+```{r}
+
+library(broom) 
+library(dplyr) 
+library(ggplot2) 
+
+# Simulation parameters
+n <- 30          
+sigma <- 5       
+alpha <- 0.05    
+num_simulations <- 5000  
+
+# True means to evaluate
+true_mus <- 0:6
+
+# Initialize a data frame to store results
+results <- data.frame(
+  true_mu = numeric(),
+  estimate_mu = numeric(),
+  p_value = numeric()
+)
+
+# Run the simulations
+set.seed(123) 
+for (mu in true_mus) {
+  for (i in 1:num_simulations) {
+    sample_data <- rnorm(n, mean = mu, sd = sigma)
+    
+    test <- t.test(sample_data, mu = 0)
+    
+    tidy_test <- tidy(test)
+    results <- rbind(results, data.frame(
+      true_mu = mu,
+      estimate_mu = tidy_test$estimate,
+      p_value = tidy_test$p.value
+    ))
+  }
+}
+
+power_results <- results %>%
+  group_by(true_mu) %>%
+  summarize(power = mean(p_value < alpha), .groups = 'drop')
+
+ggplot(power_results, aes(x = true_mu, y = power)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Power Curve",
+    x = "True Mean (mu)",
+    y = "Power (Probability of rejecting H0)"
+  )
+
+mean_estimates <- results %>%
+  group_by(true_mu) %>%
+  summarize(
+    avg_estimate_mu = mean(estimate_mu),
+    avg_estimate_mu_reject = mean(estimate_mu[p_value < alpha]),
+    .groups = 'drop'
+  )
+
+# Plot average estimate of mu_hat
+ggplot(mean_estimates, aes(x = true_mu)) +
+  geom_line(aes(y = avg_estimate_mu, color = "All Samples")) +
+  geom_point(aes(y = avg_estimate_mu, color = "All Samples")) +
+  geom_line(aes(y = avg_estimate_mu_reject, color = "Rejected H0 Only")) +
+  geom_point(aes(y = avg_estimate_mu_reject, color = "Rejected H0 Only")) +
+  labs(
+    title = "Average Estimate of Mu",
+    x = "True Mean (mu)",
+    y = "Average Estimate of Mu"
+  ) +
+  scale_color_manual(name = "Condition", values = c("All Samples" = "blue", "Rejected H0 Only" = "red")) +
+  theme_minimal()
+
+```
+
+# Interpretations
+Power increases with the effect size (true mean), as shown in the power curve plot.When the true mean is far from the null hypothesis (μ=0), the test is more likely to detect the difference, resulting in higher power.
+The average estimate of mu is close to the true mu in both the full sample and the subset where H0 is rejected. 
+No, the sample average of μ_^ across tests where the null is rejected is not approximately equal to the true value of μ. This discrepancy arises because of selection bias.
+
+
+## Problem 3
+Description of raw data:
+The raw dataset provides information about victim demographics including age, race, and gender.
+Each homicide is geolocated using latitude and longitude.
+Essential variables:
+uid: unique identifier for each homicide case.
+reported_date: the date when the homicide was reported (YYYYMMDD).
+victim_last: last name of the victim.
+victim_first: first name of the victim.
+victim_race: the race or ethnicity of the victim.
+victim_age: age of the victim at the time of the homicide.
+victim_sex: gender of the victim (Male/Female).
+city: the city where the homicide occurred.
+state: the state where the homicide occurred.
+lat: latitude of the homicide location.
+lon: longitude of the homicide location.
+disposition: the status of the case, describing whether it has been solved or remains unsolved.
+
+
+
+```{r}
+install.packages("tidyr")
+library(tidyr)
+
+# Load necessary libraries
+library(dplyr)
+library(broom)
+library(ggplot2)
+library(purrr)
+
+# Load the data
+homicide_data <- read.csv("data/homicide-data.csv", encoding = "latin1")
+
+# Create a city_state variable
+homicide_data <- homicide_data %>%
+  mutate(city_state = paste(city, state, sep = ", "))
+
+# Summarize within cities to get total and unsolved homicides
+homicide_summary <- homicide_data %>%
+  group_by(city_state) %>%
+  summarize(
+    total_homicides = n(),
+    unsolved_homicides = sum(disposition %in% c("Closed without arrest", "Open/No arrest"))
+  )
+
+# Function to calculate proportion and confidence intervals using prop.test
+calculate_proportion_ci <- function(total, unsolved) {
+  if (total > 0) {
+    test_result <- prop.test(unsolved, total)
+    tidy_result <- tidy(test_result)
+    return(tibble(
+      estimated_proportion = tidy_result$estimate,
+      ci_lower = tidy_result$conf.low,
+      ci_upper = tidy_result$conf.high
+    ))
+  } else {
+    return(tibble(
+      estimated_proportion = NA,
+      ci_lower = NA,
+      ci_upper = NA
+    ))
+  }
+}
+
+# Apply the function across all cities
+homicide_summary <- homicide_summary %>%
+  rowwise() %>%
+  mutate(
+    stats = list(calculate_proportion_ci(total_homicides, unsolved_homicides))
+  ) %>%
+  unnest(stats)
+
+# Sort by estimated_proportion for better visualization
+homicide_summary <- homicide_summary %>%
+  arrange(desc(estimated_proportion))
+
+# Plotting the results
+ggplot(homicide_summary, aes(x = estimated_proportion, y = reorder(city_state, estimated_proportion))) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2, color = "blue") +
+  labs(
+    title = "Proportion of Unsolved Homicides by City",
+    x = "Proportion of Unsolved Homicides",
+    y = "City, State"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+
+
+
+
+
+
+
